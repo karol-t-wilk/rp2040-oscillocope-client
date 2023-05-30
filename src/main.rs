@@ -23,7 +23,7 @@ const HEIGHT: u32 = 300;
 fn main() {
     println!("Hello, world!");
 
-    let time_per_screen: Duration = Duration::from_secs_f64(1. / 490.);
+    let mut time_per_screen: Duration = Duration::from_secs_f64(1. / 490.);
 
     let device = rusb::devices()
         .unwrap()
@@ -107,6 +107,17 @@ fn main() {
     let mut last_column_index = 0;
     let mut reading_buf = [0; WIDTH as usize];
 
+    let readings_num = Arc::new(Mutex::new(0));
+    let readings_num_clone = readings_num.clone();
+
+    thread::spawn(move || loop {
+        let mut readings_num = readings_num_clone.lock().unwrap();
+        println!("rate = {}", *readings_num);
+        *readings_num = 0;
+        drop(readings_num);
+        thread::sleep(Duration::from_secs(1));
+    });
+
     event_loop.run(move |event, _, control_flow| {
         if let Event::RedrawRequested(_) = event {
             let frame = pixels.frame_mut();
@@ -116,6 +127,8 @@ fn main() {
             readings.append(readings_handle.as_mut());
             *readings_handle = Vec::new();
             drop(readings_handle);
+
+            *readings_num.lock().unwrap() += readings.len();
 
             let current_time = SystemTime::now();
             let delta_time = current_time
@@ -134,7 +147,7 @@ fn main() {
             let mut current_pixel = 0;
 
             while current_pixel < pixels_to_draw {
-                let begin = current_pixel * readings_per_pixel;
+                let begin = min(current_pixel * readings_per_pixel, readings.len());
                 let end = min(begin + readings_per_pixel, readings.len());
                 let slice = &readings[begin..end];
                 let val = slice
@@ -174,6 +187,15 @@ fn main() {
             if input.key_pressed(VirtualKeyCode::Escape) || input.close_requested() {
                 *control_flow = ControlFlow::Exit;
                 return;
+            } else if input.key_pressed(VirtualKeyCode::Up) {
+                time_per_screen += Duration::from_micros(100);
+                println!("dur = {}", time_per_screen.as_micros());
+            } else if input.key_pressed(VirtualKeyCode::Down) {
+                time_per_screen = max(
+                    Duration::from_micros(100),
+                    time_per_screen - Duration::from_micros(100),
+                );
+                println!("dur = {}", time_per_screen.as_micros());
             }
         }
     });
