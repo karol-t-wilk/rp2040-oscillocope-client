@@ -23,7 +23,7 @@ const HEIGHT: u32 = 300;
 fn main() {
     println!("Hello, world!");
 
-    let mut time_per_screen: Duration = Duration::from_secs_f64(1. / 490.);
+    let mut time_per_screen: Duration = Duration::from_millis(100);
 
     let device = rusb::devices()
         .unwrap()
@@ -118,6 +118,8 @@ fn main() {
         thread::sleep(Duration::from_secs(1));
     });
 
+    let mut is_paused = false;
+
     event_loop.run(move |event, _, control_flow| {
         if let Event::RedrawRequested(_) = event {
             let frame = pixels.frame_mut();
@@ -134,13 +136,13 @@ fn main() {
             let delta_time = current_time
                 .duration_since(last_draw)
                 .unwrap_or(Duration::ZERO);
-            last_draw = current_time;
 
-            let pixels_to_draw = max(
+
+            let pixels_to_draw = max(1, min(
                 (delta_time.as_secs_f64() / time_per_screen.as_secs_f64() * f64::from(WIDTH))
                     as usize,
                 readings.len(),
-            );
+            ));
 
             let readings_per_pixel = max(readings.len() / pixels_to_draw, 1);
 
@@ -157,22 +159,26 @@ fn main() {
 
                 let yval = HEIGHT - (val / 4096. * HEIGHT as f64) as u32;
 
-                reading_buf[last_column_index] = yval;
+                reading_buf[(last_column_index + current_pixel) % WIDTH as usize] = yval;
                 current_pixel += 1;
-                last_column_index += 1;
-                last_column_index %= WIDTH as usize;
             }
 
-            for (i, p) in frame.chunks_exact_mut(4).enumerate() {
-                let x = i % WIDTH as usize;
-                let y = i / WIDTH as usize;
+            last_column_index += pixels_to_draw;
+            last_column_index %= WIDTH as usize;
 
-                if y == reading_buf[x].try_into().unwrap_or(0) {
-                    p.copy_from_slice(&[0x00, 0xff, 0x00, 0xff])
-                } else {
-                    p.copy_from_slice(&[0x00, 0x00, 0x00, 0xff])
+            if !is_paused {
+                for (i, p) in frame.chunks_exact_mut(4).enumerate() {
+                    let x = i % WIDTH as usize;
+                    let y = i / WIDTH as usize;
+
+                    if y == reading_buf[x] as usize {
+                        p.copy_from_slice(&[0x00, 0xff, 0x00, 0xff])
+                    } else {
+                        p.copy_from_slice(&[0x00, 0x00, 0x00, 0xff])
+                    }
                 }
             }
+
 
             if let Err(err) = pixels.render() {
                 println!("error: {:?}", err);
@@ -181,6 +187,8 @@ fn main() {
             }
 
             window.request_redraw();
+
+            last_draw = current_time;
         }
 
         if input.update(&event) {
@@ -196,6 +204,8 @@ fn main() {
                     time_per_screen - Duration::from_micros(100),
                 );
                 println!("dur = {}", time_per_screen.as_micros());
+            } else if input.key_pressed(VirtualKeyCode::P) {
+                is_paused = !is_paused;
             }
         }
     });
