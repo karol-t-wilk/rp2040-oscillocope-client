@@ -1,8 +1,9 @@
 use std::{
     cmp::{max, min},
-    sync::{Arc, Mutex, RwLock},
+    env,
+    sync::{Arc, Mutex},
     thread,
-    time::{self, Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use pixels::{Pixels, SurfaceTexture};
@@ -14,16 +15,25 @@ use winit::{
 };
 use winit_input_helper::WinitInputHelper;
 
-const COUNTS_3V3: f64 = 1912.;
-const COUNTS_GND: f64 = 160.;
-
 const WIDTH: u32 = 400;
 const HEIGHT: u32 = 300;
 
 fn main() {
-    println!("Hello, world!");
+    let num: u64 = env::args()
+        .nth(1)
+        .expect("Must give duration")
+        .parse()
+        .expect("Wrong format for duration");
+    let unit = env::args().nth(2).expect("Must give unit");
 
-    let mut time_per_screen: Duration = Duration::from_millis(100);
+    let mut time_per_screen: Duration;
+
+    match unit.as_str() {
+        "s" => time_per_screen = Duration::from_secs(num),
+        "ms" => time_per_screen = Duration::from_millis(num),
+        _ => panic!("Unsupported unit!")
+    }
+
 
     let device = rusb::devices()
         .unwrap()
@@ -119,6 +129,7 @@ fn main() {
     });
 
     let mut is_paused = false;
+    let mut average_readings = false;
 
     event_loop.run(move |event, _, control_flow| {
         if let Event::RedrawRequested(_) = event {
@@ -137,34 +148,34 @@ fn main() {
                 .duration_since(last_draw)
                 .unwrap_or(Duration::ZERO);
 
-
-            let pixels_to_draw = max(1, min(
-                (delta_time.as_secs_f64() / time_per_screen.as_secs_f64() * f64::from(WIDTH))
-                    as usize,
-                readings.len(),
-            ));
+            let pixels_to_draw = ((delta_time.as_secs_f64() / time_per_screen.as_secs_f64()
+                * f64::from(WIDTH)) as usize)
+                .clamp(1, readings.len());
 
             let readings_per_pixel = max(readings.len() / pixels_to_draw, 1);
 
             let mut current_pixel = 0;
 
             while current_pixel < pixels_to_draw {
-                let begin = min(current_pixel * readings_per_pixel, readings.len());
-                let end = min(begin + readings_per_pixel, readings.len());
-                let slice = &readings[begin..end];
-                let val = slice
-                    .iter()
-                    .fold(0., |acc, cur| acc + f64::from(cur.to_owned()))
-                    / (slice.len() as f64);
+                let val = if average_readings {
+                    let start = min(current_pixel * readings_per_pixel, readings.len() - 1);
+                    let end = min(start + readings_per_pixel, readings.len());
+                    let slice = &readings[start..end];
+                    slice
+                        .iter()
+                        .fold(0., |acc, cur| acc + f64::from(cur.to_owned()))
+                        / (slice.len() as f64)
+                } else {
+                    f64::from(readings[min(current_pixel * readings_per_pixel, readings.len() - 1)])
+                };
 
-                let yval = HEIGHT - (val / 4096. * HEIGHT as f64) as u32;
+                let yval = (HEIGHT - (val / 4096. * HEIGHT as f64) as u32).clamp(0, HEIGHT - 1);
 
                 reading_buf[(last_column_index + current_pixel) % WIDTH as usize] = yval;
                 current_pixel += 1;
             }
 
-            last_column_index += pixels_to_draw;
-            last_column_index %= WIDTH as usize;
+            last_column_index = (last_column_index + pixels_to_draw) % WIDTH as usize;
 
             if !is_paused {
                 for (i, p) in frame.chunks_exact_mut(4).enumerate() {
@@ -178,7 +189,6 @@ fn main() {
                     }
                 }
             }
-
 
             if let Err(err) = pixels.render() {
                 println!("error: {:?}", err);
@@ -206,6 +216,8 @@ fn main() {
                 println!("dur = {}", time_per_screen.as_micros());
             } else if input.key_pressed(VirtualKeyCode::P) {
                 is_paused = !is_paused;
+            } else if input.key_pressed(VirtualKeyCode::A) {
+                average_readings = !average_readings;
             }
         }
     });
