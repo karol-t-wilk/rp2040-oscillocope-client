@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+minifb = "0.24.0"
 pixels = "0.12.1"
 rusb = "0.9.2"
 serial = "0.4.0"
